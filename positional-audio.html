@@ -264,20 +264,25 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           // Load multiple audio sources.
           Promise.all([
             createAudioSource({
-              url: 'media/sound/guitar.ogg',
+              url: 'media/sound/pinknoise.wav',
               position: [0, DEFAULT_HEIGHT, -1],
               rotateY: 0
-            }),
-            createAudioSource({
-              url: 'media/sound/drums.ogg',
-              position: [-1, DEFAULT_HEIGHT, 0],
-              rotateY: Math.PI * 0.5
-            }),
-            createAudioSource({
-              url: 'media/sound/perc.ogg',
-              position: [1, DEFAULT_HEIGHT, 0],
-              rotateY: Math.PI * -0.5
-            }),
+            })
+            // createAudioSource({
+            //   url: 'media/sound/guitar.ogg',
+            //   position: [0, DEFAULT_HEIGHT, -1],
+            //   rotateY: 0
+            // }),
+            // createAudioSource({
+            //   url: 'media/sound/drums.ogg',
+            //   position: [-1, DEFAULT_HEIGHT, 0],
+            //   rotateY: Math.PI * 0.5
+            // }),
+            // createAudioSource({
+            //   url: 'media/sound/perc.ogg',
+            //   position: [1, DEFAULT_HEIGHT, 0],
+            //   rotateY: Math.PI * -0.5
+            // }),
           ]).then((sources) => {
             audioSources = sources;
 
