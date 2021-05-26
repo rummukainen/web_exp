@@ -89,6 +89,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       // Audio scene globals
       let audioContext = new AudioContext();
       let resonance = new ResonanceAudio(audioContext);
+      resonance.setAmbisonicOrder(3);
       resonance.output.connect(audioContext.destination);
 
       audioContext.suspend();
