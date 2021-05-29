@@ -57,6 +57,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       import {mat4, vec3} from './js/render/math/gl-matrix.js';
       import {InlineViewerHelper} from './js/util/inline-viewer-helper.js';
       import {QueryArgs} from './js/util/query-args.js';
+      import {SkyboxNode} from './js/render/nodes/skybox.js';
 
       // If requested, use the polyfill to provide support for mobile devices
       // and devices which only support WebVR.
@@ -79,7 +80,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       let scene = new Scene();
       //scene.addNode(new Gltf2Node({url: 'media/gltf/cube-room/cube-room.gltf'}));
       //scene.addNode(new Gltf2Node({url: 'media/gltf/floaty/model.gltf'}));
-      //scene.addNode(new Gltf2Node({url: 'media/gltf/camp/camp.gltf'}));
+      scene.addNode(new Gltf2Node({url: 'media/gltf/camp/camp.gltf'}));
+      scene.addNode(new SkyboxNode({url: 'media/textures/milky-way-4k.png'}));
       scene.standingStats(true);
 
       let playButton = null;
