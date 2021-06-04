@@ -31,7 +31,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     <title>Positional Audio</title>
 
-    <script src="https://cdn.jsdelivr.net/npm/resonance-audio/build/resonance-audio.min.js"></script>
+    <script src="JSAmbisonics/ambisonics.umd.js"></script>
+    <script src="JSAmbisonics/hoa-panner.js"></script>
 
   </head>
   <body>
@@ -92,52 +93,115 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       stereo.visible = false;
       scene.addNode(stereo);
 
-      // Audio scene globals
-      let audioContext = new AudioContext();
-      let resonance = new ResonanceAudio(audioContext, {ambisonicOrder: 3});
-      //resonance.setAmbisonicOrder(3);
-      resonance.output.connect(audioContext.destination);
 
-      audioContext.suspend();
 
-      // TODO: This is crashing in recent versions of Resonance for me, and I'm
-      // not sure why. It does run successfully without it, though.
-      // Rough room dimensions in meters (estimated from model in Blender.)
-      /*let roomDimensions = {
-        width : 6,
-        height : 3,
-        depth : 6
-      };
+      // Setup audio context and variables
+      var AudioContext = window.AudioContext // Default
+          || window.webkitAudioContext; // Safari and old versions of Chrome
+      var context = new AudioContext; // Create and Initialize the Audio Context
 
-      // Simplified view of the materials that make up the scene.
-      let roomMaterials = {
-        left : 'plywood-panel', // Garage walls
-        right : 'plywood-panel',
-        front : 'plywood-panel',
-        back : 'metal', // To account for the garage door
-        down : 'polished-concrete-or-tile', // garage floor
-        up : 'wood-ceiling'
-      };
-      resonance.setRoomProperties(roomDimensions, roomMaterials);*/
+      // added resume context to handle Firefox suspension of it when new IR loaded
+      // see: http://stackoverflow.com/questions/32955594/web-audio-scriptnode-not-called-after-button-onclick
+      context.onstatechange = function() {
+          if (context.state === "suspended") { context.resume(); }
+      }
+
+      var soundUrl = "JSAmbisonics/sounds/sample2.wav";
+      var irUrl_0 = "JSAmbisonics/IRs/ambisonic2binaural_filters/HOA3_IRC_1008_virtual.wav";
+      var irUrl_1 = "JSAmbisonics/IRs/ambisonic2binaural_filters/aalto2016_N3.wav";
+      var irUrl_2 = "JSAmbisonics/IRs/ambisonic2binaural_filters/HOA3_BRIRs-medium.wav";
+
+      var maxOrder = 3;
+      var orderOut = 3;
+      var soundBuffer, sound;
+
+
+
+
+
+      // define HOA encoder (panner)
+      var encoder = new ambisonics.monoEncoder(context, maxOrder);
+      console.log(encoder);
+      // define HOA mirroring
+      var mirror = new ambisonics.sceneMirror(context, maxOrder);
+      console.log(mirror);
+      // define HOA order limiter (to show the effect of order)
+      var limiter = new ambisonics.orderLimiter(context, maxOrder, orderOut);
+      console.log(limiter);
+      // binaural HOA decoder
+      var decoder = new ambisonics.binDecoder(context, maxOrder);
+      console.log(decoder);
+      // output gain
+      var gainOut = context.createGain();
+
+      // connect HOA blocks
+      encoder.out.connect(mirror.in);
+
+      mirror.out.connect(analyser.in);
+      mirror.out.connect(limiter.in);
+      limiter.out.connect(decoder.in);
+      decoder.out.connect(gainOut);
+      gainOut.connect(context.destination);
+
+
+
+
+
+      // function to assign sample to the sound buffer for playback (and enable playbutton)
+      var assignSample2SoundBuffer = function(decodedBuffer) {
+          soundBuffer = decodedBuffer;
+          document.getElementById('play').disabled = false;
+      }
+
+
+
+
+      // function to load samples
+      function loadSample(url, doAfterLoading) {
+          var fetchSound = new XMLHttpRequest(); // Load the Sound with XMLHttpRequest
+          fetchSound.open("GET", url, true); // Path to Audio File
+          fetchSound.responseType = "arraybuffer"; // Read as Binary Data
+          fetchSound.onload = function() {
+              context.decodeAudioData(fetchSound.response, doAfterLoading, onDecodeAudioDataError);
+          }
+          fetchSound.send();
+      }
+      loadSample(soundUrl, assignSample2SoundBuffer);
+
+
+
+
+      // load filters and assign to buffers
+      var assignFiltersOnLoad = function(buffer) {
+          decoder.updateFilters(buffer);
+      }
+      var loader_filters = new ambisonics.HOAloader(context, maxOrder, irUrl_0, assignFiltersOnLoad);
+      loader_filters.load();
+
+
+
+
+
 
       function createAudioSource(options) {
         // Create a Resonance source and set its position in space.
-        let source = resonance.createSource();
-        let pos = options.position;
-        source.setPosition(pos[0], pos[1], pos[2]);
+        //let source = resonance.createSource();
+        //let pos = options.position;
+        //source.setPosition(pos[0], pos[1], pos[2]);
 
-        // Connect an analyser. This is only for visualization of the audio, and
-        // in most cases you won't want it.
-        let analyser = audioContext.createAnalyser();
-        analyser.fftSize = ANALYSER_FFT_SIZE;
-        analyser.lastRMSdB = 0;
+        sound = context.createBufferSource();
+        sound.buffer = soundBuffer;
+        sound.loop = true;
+        sound.connect(encoder.in);
+        sound.start(0);
+        sound.isPlaying = true;
 
-        return fetch(options.url)
-          .then((response) => response.arrayBuffer())
-          .then((buffer) => audioContext.decodeAudioData(buffer))
-          .then((decodedBuffer) => {
-            let bufferSource = createBufferSource(
-              source, decodedBuffer, analyser);
+        //return fetch(options.url)
+        //  .then((response) => response.arrayBuffer())
+        //  .then((buffer) => audioContext.decodeAudioData(buffer))
+        //  .then((decodedBuffer) => {
+        //    let bufferSource = createBufferSource(
+        //      source, decodedBuffer, analyser);
 
             return {
               buffer: decodedBuffer,
@@ -166,31 +230,12 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         return bufferSource;
       }
 
-      /**
-       * Returns a floating point value that represents the loudness of the audio
-       * stream, appropriate for scaling an object with.
-       * @return {Number} loudness scalar.
-       */
-      let fftBuffer = new Float32Array(ANALYSER_FFT_SIZE);
-      function getLoudnessScale(analyser) {
-        analyser.getFloatTimeDomainData(fftBuffer);
-        let sum = 0;
-        for (let i = 0; i < fftBuffer.length; ++i)
-          sum += fftBuffer[i] * fftBuffer[i];
 
-        // Calculate RMS and convert it to DB for perceptual loudness.
-        let rms = Math.sqrt(sum / fftBuffer.length);
-        let db = 30 + 10 / Math.LN10 * Math.log(rms <= 0 ? 0.0001 : rms);
 
-        // Moving average with the alpha of 0.525. Experimentally determined.
-        analyser.lastRMSdB += 0.525 * ((db < 0 ? 0 : db) - analyser.lastRMSdB);
-
-        // Scaling by 1/30 is also experimentally determined. Max is to present
-        // objects from disappearing entirely.
-        return Math.max(0.3, analyser.lastRMSdB / 30.0);
-      }
 
       let audioSources = [];
+
+
 
       function updateAudioNodes() {
         if (!stereo)
@@ -275,21 +320,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               position: [0, DEFAULT_HEIGHT, -1],
               rotateY: 0
             }),
-            // createAudioSource({
-            //   url: 'media/sound/guitar.ogg',
-            //   position: [0, DEFAULT_HEIGHT, -1],
-            //   rotateY: 0
-            // }),
-            // createAudioSource({
-            //   url: 'media/sound/drums.ogg',
-            //   position: [-1, DEFAULT_HEIGHT, 0],
-            //   rotateY: Math.PI * 0.5
-            // }),
-            // createAudioSource({
-            //   url: 'media/sound/perc.ogg',
-            //   position: [1, DEFAULT_HEIGHT, 0],
-            //   rotateY: Math.PI * -0.5
-            // }),
           ]).then((sources) => {
             audioSources = sources;
 
@@ -428,7 +458,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       }
 
       let tmpMatrix = mat4.create();
-      
+
       function onXRFrame(t, frame) {
         let session = frame.session;
         let refSpace = session.isImmersive ?
