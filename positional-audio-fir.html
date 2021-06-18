@@ -1,0 +1,517 @@
+<!doctype html>
+<!--
+Copyright 2018 The Immersive Web Community Group
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+-->
+<html>
+
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no'>
+  <meta name='mobile-web-app-capable' content='yes'>
+  <meta name='apple-mobile-web-app-capable' content='yes'>
+  <link rel='icon' type='image/png' sizes='32x32' href='favicon-32x32.png'>
+  <link rel='icon' type='image/png' sizes='96x96' href='favicon-96x96.png'>
+  <link rel='stylesheet' href='css/common.css'>
+
+  <title>Positional Audio</title>
+
+  <script src="./js/binaural-fir.min.js"></script>
+  <script src="./media/complete_hrtfs.js"></script>
+
+  <script src="https://ajax.googleapis.com/ajax/libs/threejs/r76/three.min.js"></script>
+
+</head>
+
+<body>
+  <header>
+    <details open>
+      <summary>Positional Audio</summary>
+      <p>
+        This sample demonstrates playing audio that sounds as if it originates
+        at a specific point in the space. Audio will begin playing when you
+        enter XR.
+        <a class="back" href="./">Back</a>
+      </p>
+    </details>
+  </header>
+
+  <audio id="stimulus" src="./media/sound/breakbeat.wav" controls loop></audio>
+
+  <script type="module">
+    import { WebXRButton } from './js/util/webxr-button.js';
+    import { Scene } from './js/render/scenes/scene.js';
+    import { Renderer, createWebGLContext } from './js/render/core/renderer.js';
+    import { UrlTexture } from './js/render/core/texture.js';
+    import { ButtonNode } from './js/render/nodes/button.js';
+    import { Gltf2Node } from './js/render/nodes/gltf2.js';
+    import { mat4, vec3 } from './js/render/math/gl-matrix.js';
+    import { InlineViewerHelper } from './js/util/inline-viewer-helper.js';
+    import { QueryArgs } from './js/util/query-args.js';
+    import { SkyboxNode } from './js/render/nodes/skybox.js';
+
+    // If requested, use the polyfill to provide support for mobile devices
+    // and devices which only support WebVR.
+    import WebXRPolyfill from './js/third-party/webxr-polyfill/build/webxr-polyfill.module.js';
+    if (QueryArgs.getBool('usePolyfill', true)) {
+      let polyfill = new WebXRPolyfill();
+    }
+
+    const DEFAULT_HEIGHT = 1.5;
+    const ANALYSER_FFT_SIZE = 1024;
+
+    // XR globals.
+    let xrButton = null;
+    let xrImmersiveRefSpace = null;
+    let inlineViewerHelper = null;
+
+    // WebGL scene globals.
+    let gl = null;
+    let renderer = null;
+    let scene = new Scene();
+    //scene.addNode(new Gltf2Node({url: 'media/gltf/cube-room/cube-room.gltf'}));
+    //scene.addNode(new Gltf2Node({url: 'media/gltf/floaty/model.gltf'}));
+    scene.addNode(new Gltf2Node({ url: 'media/gltf/camp/camp.gltf' }));
+    scene.addNode(new SkyboxNode({ url: 'media/textures/milky-way-4k.png' }));
+    scene.standingStats(true);
+
+    let playButton = null;
+    let playTexture = new UrlTexture('media/textures/play-button.png');
+    let pauseTexture = new UrlTexture('media/textures/pause-button.png');
+    let stereo = new Gltf2Node({ url: 'media/gltf/stereo/stereo.gltf' });
+    // FIXME: Temporary fix to initialize for cloning.
+    stereo.visible = true;
+    scene.addNode(stereo);
+
+
+
+
+
+    // Audio scene globals
+    let audioContext = new AudioContext();
+    var targetNode = audioContext.destination;
+    var listener = audioContext.listener;
+
+
+    // HRTF files loading
+    for (var i = 0; i < hrtfs.length; i++) {
+      var buffer = audioContext.createBuffer(2, 512, 44100);
+      var bufferChannelLeft = buffer.getChannelData(0);
+      var bufferChannelRight = buffer.getChannelData(1);
+      for (var e = 0; e < hrtfs[i].fir_coeffs_left.length; e++) {
+        bufferChannelLeft[e] = hrtfs[i].fir_coeffs_left[e];
+        bufferChannelRight[e] = hrtfs[i].fir_coeffs_right[e];
+      }
+      hrtfs[i].buffer = buffer;
+    }
+
+
+
+    //Create Audio Nodes
+    var audiosource = document.getElementById('stimulus');
+    var player = audioContext.createMediaElementSource(audiosource);
+  
+
+
+
+    // 1. New audio source
+    function createAudioSource(options) {
+      // Create a BinauralFIR source and set its position in space.
+      let binauralFIRNode = new BinauralFIR({
+      audioContext: audioContext});
+      
+      //Set HRTF dataset
+      binauralFIRNode.HRTFDataset = hrtfs;
+      
+      let pos = options.position;
+      binauralFIRNode.setPosition(pos[0], pos[1], pos[2]);
+      
+
+       //Connect Audio Nodes
+        player.connect(binauralFIRNode.input);
+        binauralFIRNode.connect(targetNode);
+
+      // Connect an analyser. This is only for visualization of the audio, and
+      // in most cases you won't want it.
+      let analyser = audioContext.createAnalyser();
+      analyser.fftSize = ANALYSER_FFT_SIZE;
+      analyser.lastRMSdB = 0;
+
+      return fetch(options.url)
+        .then((response) => response.arrayBuffer())
+        .then((buffer) => audioContext.decodeAudioData(buffer))
+        .then((decodedBuffer) => {
+          let bufferSource = createBufferSource(
+            binauralFIRNode, decodedBuffer, analyser);
+
+          return {
+            buffer: decodedBuffer,
+            bufferSource: bufferSource,
+            source: binauralFIRNode,
+            analyser: analyser,
+            position: pos,
+            rotateY: options.rotateY,
+            node: null
+          };
+        });
+    }
+
+    // 2. Buffer source
+    function createBufferSource(source, buffer, analyser) {
+      // Create a buffer source. This will need to be recreated every time
+      // we wish to start the audio, see
+      // https://developer.mozilla.org/en-US/docs/Web/API/AudioBufferSourceNode
+      let bufferSource = audioContext.createBufferSource();
+      bufferSource.loop = true;
+      bufferSource.connect(source.input);
+
+      bufferSource.connect(analyser);
+
+      bufferSource.buffer = buffer;
+
+      return bufferSource;
+    }
+
+
+
+    /**
+   * Returns a floating point value that represents the loudness of the audio
+   * stream, appropriate for scaling an object with.
+   * @return {Number} loudness scalar.
+   */
+    let fftBuffer = new Float32Array(ANALYSER_FFT_SIZE);
+    function getLoudnessScale(analyser) {
+      analyser.getFloatTimeDomainData(fftBuffer);
+      let sum = 0;
+      for (let i = 0; i < fftBuffer.length; ++i)
+        sum += fftBuffer[i] * fftBuffer[i];
+
+      // Calculate RMS and convert it to DB for perceptual loudness.
+      let rms = Math.sqrt(sum / fftBuffer.length);
+      let db = 30 + 10 / Math.LN10 * Math.log(rms <= 0 ? 0.0001 : rms);
+
+      // Moving average with the alpha of 0.525. Experimentally determined.
+      analyser.lastRMSdB += 0.525 * ((db < 0 ? 0 : db) - analyser.lastRMSdB);
+
+      // Scaling by 1/30 is also experimentally determined. Max is to present
+      // objects from disappearing entirely.
+      return Math.max(0.3, analyser.lastRMSdB / 30.0);
+    }
+
+    let audioSources = [];
+
+    function updateAudioNodes() {
+      if (!stereo)
+        return;
+
+        for (let source of audioSources) {
+      if (!source.node) {
+        source.node = stereo.clone();
+        source.node.visible = true;
+        source.node.selectable = true;
+        scene.addNode(source.node);
+      }
+
+      //console.log(source)
+
+      let node = source.node;
+      let matrix = node.matrix;
+
+      // Move the node to the right location.
+      mat4.identity(matrix);
+      mat4.translate(matrix, matrix, source.position);
+      mat4.rotateY(matrix, matrix, source.rotateY);
+    }
+  }
+
+    function playAudio() {
+      if (audioContext.state == 'running')
+        return;
+
+      audioContext.resume();
+      for (let source of audioSources) {
+      source.bufferSource.start(0);
+      }
+      if (playButton) {
+        playButton.iconTexture = pauseTexture;
+      }
+    }
+
+    function pauseAudio() {
+      if (audioContext.state == 'suspended')
+        return;
+        for (let source of audioSources) {
+      source.bufferSource.stop(0);
+      source.bufferSource = createBufferSource(
+        source.source, source.buffer, source.analyser);
+        }
+      audioContext.suspend();
+
+      if (playButton) {
+        playButton.iconTexture = playTexture;
+      }
+    }
+
+    window.addEventListener('blur', () => {
+      // As a general rule you should mute any sounds your page is playing
+      // whenever the page loses focus.
+      pauseAudio();
+    });
+
+    function initXR() {
+      xrButton = new WebXRButton({
+        onRequestSession: onRequestSession,
+        onEndSession: onEndSession
+      });
+      document.querySelector('header').appendChild(xrButton.domElement);
+
+      if (navigator.xr) {
+        navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+          xrButton.enabled = supported;
+        });
+
+
+        // Load audio sources.
+        Promise.all([
+          createAudioSource({
+            url: 'media/sound/breakbeat.wav',
+            position: [0, 1.6, -1],
+            rotateY: 0
+          }),
+        ]).then((sources) => {
+          audioSources = sources;
+
+          // Once the audio is loaded, create a button that toggles the
+          // audio state when clicked.
+          playButton = new ButtonNode(playTexture, () => {
+            if (audioContext.state == 'running') {
+              pauseAudio();
+            } else {
+              playAudio();
+            }
+          });
+          playButton.translation = [0, 1.2, -0.65];
+          scene.addNode(playButton);
+        });
+
+
+        navigator.xr.requestSession('inline').then(onSessionStarted);
+      }
+    }
+
+    function initGL() {
+      if (gl)
+        return;
+
+      gl = createWebGLContext({
+        xrCompatible: true
+      });
+      document.body.appendChild(gl.canvas);
+
+      function onResize() {
+        gl.canvas.width = gl.canvas.clientWidth * window.devicePixelRatio;
+        gl.canvas.height = gl.canvas.clientHeight * window.devicePixelRatio;
+      }
+      window.addEventListener('resize', onResize);
+      onResize();
+
+      renderer = new Renderer(gl);
+      scene.setRenderer(renderer);
+    }
+
+    function onRequestSession() {
+      return navigator.xr.requestSession('immersive-vr', {
+        requiredFeatures: ['local-floor']
+      }).then((session) => {
+        xrButton.setSession(session);
+        session.isImmersive = true;
+        onSessionStarted(session);
+      });
+    }
+
+    function onSessionStarted(session) {
+      session.addEventListener('end', onSessionEnded);
+
+      session.addEventListener('selectstart', onSelectStart);
+      session.addEventListener('selectend', onSelectEnd);
+      session.addEventListener('select', (ev) => {
+        let refSpace = ev.frame.session.isImmersive ?
+          xrImmersiveRefSpace :
+          inlineViewerHelper.referenceSpace;
+        scene.handleSelect(ev.inputSource, ev.frame, refSpace);
+      });
+
+      initGL();
+      scene.inputRenderer.useProfileControllerMeshes(session);
+
+      let glLayer = new XRWebGLLayer(session, gl);
+      session.updateRenderState({ baseLayer: glLayer });
+
+      let refSpaceType = session.isImmersive ? 'local-floor' : 'viewer';
+      session.requestReferenceSpace(refSpaceType).then((refSpace) => {
+        if (session.isImmersive) {
+          xrImmersiveRefSpace = refSpace;
+        } else {
+          inlineViewerHelper = new InlineViewerHelper(gl.canvas, refSpace);
+          inlineViewerHelper.setHeight(1.6);
+        }
+
+        session.requestAnimationFrame(onXRFrame);
+      });
+    }
+
+    function onEndSession(session) {
+      session.end();
+    }
+
+    function onSessionEnded(event) {
+      if (event.session.isImmersive) {
+        xrButton.setSession(null);
+
+        // Stop the audio playback when we exit XR.
+        pauseAudio();
+      }
+    }
+
+    function hitTest(inputSource, frame, refSpace) {
+      let targetRayPose = frame.getPose(inputSource.targetRaySpace, refSpace);
+      if (!targetRayPose) {
+        return;
+      }
+
+      let hitResult = scene.hitTest(targetRayPose.transform);
+      if (hitResult) {
+        for (let source of audioSources) {
+          if (hitResult.node === source.node) {
+            // Associate the input source with the audio source object until
+            // onSelectEnd event is raised with the same input source.
+            source.draggingInput = inputSource;
+            source.draggingTransform = mat4.create();
+            mat4.invert(source.draggingTransform, targetRayPose.transform.matrix);
+            mat4.multiply(source.draggingTransform, source.draggingTransform, source.node.matrix);
+            return true;
+          }
+        }
+      }
+
+      return false;
+    }
+
+    function onSelectStart(ev) {
+      let refSpace = ev.frame.session.isImmersive ?
+        xrImmersiveRefSpace :
+        inlineViewerHelper.referenceSpace;
+      hitTest(ev.inputSource, ev.frame, refSpace);
+    }
+
+    // Remove any references to the input source from the audio sources so
+    // that the objects are not dragged any further after the user releases
+    // the trigger.
+    function onSelectEnd(ev) {
+      for (let source of audioSources) {
+        if (source.draggingInput === ev.inputSource) {
+          source.draggingInput = undefined;
+          source.draggingTransform = undefined;
+        }
+      }
+    }
+
+    let tmpMatrix = mat4.create();
+
+    function onXRFrame(t, frame) {
+      let session = frame.session;
+      let refSpace = session.isImmersive ?
+        xrImmersiveRefSpace :
+        inlineViewerHelper.referenceSpace;
+      let pose = frame.getViewerPose(refSpace);
+
+      scene.startFrame();
+
+      session.requestAnimationFrame(onXRFrame);
+
+      scene.updateInputSources(frame, refSpace);
+
+      // Update the position of all currently selected audio sources. It's
+      // possible to select multiple audio sources and drag them at the same
+      // time (one per controller that has the trigger held down).
+      for (let source of audioSources) {
+      if (source.draggingInput) {
+        let draggingPose = frame.getPose(source.draggingInput.targetRaySpace, refSpace);
+        if (draggingPose) {
+          let pos = source.position;
+          mat4.multiply(tmpMatrix, draggingPose.transform.matrix, source.draggingTransform);
+          vec3.transformMat4(pos, [0, 0, 0], tmpMatrix);
+          source.source.setPosition(pos[0], pos[1], pos[2]);
+        }
+      }
+    }
+
+      updateAudioNodes();
+
+      scene.drawXRFrame(frame, pose);
+
+      if (pose) {
+        //console.log(pose)
+        // Set the audio listener to face where the XR view is facing
+        // First, convert from a quaternion to a forward vector. The pose.matrix top left 3x3 elements provide unit column vectors in base space for the posed coordinate system's x/y/z axis directions, so we use the negative of the third column directly as a forward vector corresponding to the -z direction.
+        // The given pose.transform.orientation is a quaternion and not a forward vector, so is not used with web audio
+        const m = pose.transform.matrix;
+        // Set forward facing position
+        [listener.forwardX.value, listener.forwardY.value, listener.forwardZ.value] = [-m[8], -m[9], -m[10]];
+        // set the horizontal position of the top of the listener's head
+        [listener.upX.value, listener.upY.value, listener.upZ.value] = [m[4], m[5], m[6]];
+        // Set the audio listener to travel with the WebXR user position
+        // Note that pose.transform.position does equal [m[12], m[13], m[14]]
+        [listener.positionX.value, listener.positionY.value, listener.positionZ.value] = [m[12], m[13], m[14]];
+
+        //console.log(pose.transform.orientation);
+        //console.log(pose.transform.position.x);
+        // matrix: Float32Array(16)
+        // 0: 0.9939560890197754
+        // 1: -8.192149042463015e-11
+        // 2: 0.10977829992771149
+        // 3: 0
+        // 4: 0.0019210220780223608
+        // 5: 0.999846875667572
+        // 6: -0.017393343150615692
+        // 7: 0
+        // 8: -0.10976149141788483
+        // 9: 0.017499106004834175
+        // 10: 0.9938039183616638
+        // 11: 0
+        // 12: 0
+        // 13: 1.600000023841858
+        // 14: -7.758946382941536e-31
+        // 15: 1
+
+        // Update listener position from device
+        //listener.positionX.value = pose.transform.matrix[12];
+        //listener.positionY.value = pose.transform.matrix[13];
+        //listener.positionZ.value = pose.transform.matrix[14];
+      }
+
+      scene.endFrame();
+    }
+
+    // Start the XR application.
+    initXR();
+  </script>
+</body>
+
+</html>
